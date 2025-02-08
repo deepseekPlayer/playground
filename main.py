@@ -1,166 +1,217 @@
-import base64
+import streamlit as st
 import chess
 import chess.svg
-import re
-from stockfish import Stockfish
-from openai import OpenAI
-import os
-import streamlit as st
-from streamlit_chat import message
-from langchain.prompts import PromptTemplate
+import base64
+import time
+from streamlit_js_eval import streamlit_js_eval
 
 # --------------------------------------------------------------------
-# Configuration
+# Streamlit Page Configuration
 # --------------------------------------------------------------------
-CHARACTER = "robo"
-
-# Prompt template for commentary
-character_prompt = PromptTemplate(
-    input_variables=["character", "white_move", "black_move"],
-    template="""
-You are playing a game of chess and responding to each pair of moves. The moves
-are being computed by the Stockfish chess engine. I want you to focus on
-communicating with me in the voice of {character}. 
-Don't comment on overall strategy or the state of the game as you cannot know
-the game better than Stockfish. Make sure you talk like {character}.
-After you respond, explicitly mention the two moves that were just played in
-your text. Write at least 6 sentences in your response. Do not include any
-explanatory text or quotes.
-White's move: {white_move}
-Black's move: {black_move}
-"""
-)
-
-# Regular expression to remove chain-of-thought or hidden text if the LLM produces any
-chain_of_thought_regex = re.compile(r"<think>.*?</think>", flags=re.DOTALL)
+st.set_page_config(page_title="Deepseek R1 vs Legacy Stockfish", page_icon="♟")
+st.title("Deepseek R1 vs Legacy Stockfish")
 
 # --------------------------------------------------------------------
-# Streamlit & OpenAI initialization
+# Session State Initialization
 # --------------------------------------------------------------------
-st.set_page_config(page_title="robo chess", page_icon="♟")
-st.title("robo Chess: (No User Moves)")
+if "chess_board" not in st.session_state:
+    st.session_state.chess_board = chess.Board()
 
-# Initialize the OpenAI client
-client = OpenAI(
-    api_key=os.environ["E2E_TIR_ACCESS_TOKEN"],
-    base_url="https://infer.e2enetworks.net/project/p-4827/genai/deepseek_r1/v1"
-)
+# Create a placeholder for the chess board display
+board_placeholder = st.empty()
+
+# Hardcoded full game (Anderssen’s Immortal Game) as a list of move tuples.
+# Each tuple is (white_move, black_move) except the final one which is only White's mate move.
+if "hardcoded_moves" not in st.session_state:
+    st.session_state.hardcoded_moves = [
+        ("e4", "e5"),
+        ("f4", "exf4"),
+        ("Bc4", "Qh4+"),
+        ("Kf1", "b5"),
+        ("Bxb5", "Nf6"),
+        ("Nf3", "Qh6"),
+        ("d3", "Nh5"),
+        ("Nh4", "Qg5"),
+        ("Nf5", "c6"),
+        ("g4", "Nf6"),
+        ("Rg1", "cxb5"),
+        ("h4", "Qg6"),
+        ("h5", "Qg5"),
+        ("Qf3", "Ng8"),
+        ("Bxf4", "Qf6"),
+        ("Nc3", "Bc5"),
+        ("Nd5", "Qxb2"),
+        ("Bd6", "Bxd6"),
+        ("Nxd6+", "Kd8"),
+        ("Bc7#",)
+    ]
+
+if "current_move_index" not in st.session_state:
+    st.session_state.current_move_index = 0
+
+# Hardcoded log messages for each move pair stored as tuples (white_log, black_log).
+# These logs simply state the move and a brief reason.
+if "move_log_pairs" not in st.session_state:
+    st.session_state.move_log_pairs = [
+        (
+            "Deepseek R1 (White) played e4 to control the center",
+            "Legacy Stockfish (Black) played e5 to contest central control"
+        ),
+        (
+            "Deepseek R1 advanced f4 to open lines",
+            "Legacy Stockfish captured with exf4 to challenge White's structure"
+        ),
+        (
+            "Deepseek R1 developed bishop to c4 targeting f7",
+            "Legacy Stockfish checked with Qh4+ to disturb king safety"
+        ),
+        (
+            "Deepseek R1 moved king to f1 to escape check",
+            "Legacy Stockfish pushed b5 to attack the bishop"
+        ),
+        (
+            "Deepseek R1 captured on b5 with the bishop",
+            "Legacy Stockfish developed knight to f6 to control key squares"
+        ),
+        (
+            "Deepseek R1 developed knight to f3 for kingside activity",
+            "Legacy Stockfish repositioned queen to h6 to support counterplay"
+        ),
+        (
+            "Deepseek R1 played d3 to solidify the center",
+            "Legacy Stockfish moved knight to h5 for an aggressive posture"
+        ),
+        (
+            "Deepseek R1 repositioned knight to h4 to increase pressure",
+            "Legacy Stockfish moved queen to g5 to keep up the pressure"
+        ),
+        (
+            "Deepseek R1 advanced knight to f5 to intensify the attack",
+            "Legacy Stockfish played c6 to challenge White's advanced knight"
+        ),
+        (
+            "Deepseek R1 pushed g4 to support the attack",
+            "Legacy Stockfish reactivated knight to f6 for defense"
+        ),
+        (
+            "Deepseek R1 activated the rook along the g-file",
+            "Legacy Stockfish captured on b5 with cxb5 to open lines"
+        ),
+        (
+            "Deepseek R1 advanced h4 to restrict enemy moves",
+            "Legacy Stockfish shifted queen to g6 to seek counterplay"
+        ),
+        (
+            "Deepseek R1 pushed h5 to further disturb Black's position",
+            "Legacy Stockfish moved queen to g5, maintaining pressure"
+        ),
+        (
+            "Deepseek R1 centralized the queen on f3 for coordination",
+            "Legacy Stockfish retreated knight to g8 for regrouping"
+        ),
+        (
+            "Deepseek R1 captured with bishop on f4 to remove a pawn",
+            "Legacy Stockfish centralized queen to f6 to contest the board"
+        ),
+        (
+            "Deepseek R1 developed knight to c3 to bolster central control",
+            "Legacy Stockfish developed bishop to c5 to target weaknesses"
+        ),
+        (
+            "Deepseek R1 moved knight to d5 to create threats",
+            "Legacy Stockfish captured on b2 with the queen to gain material"
+        ),
+        (
+            "Deepseek R1 advanced bishop to d6 to increase pressure",
+            "Legacy Stockfish exchanged bishop on d6 to ease the tension"
+        ),
+        (
+            "Deepseek R1 captured on d6 with knight delivering check",
+            "Legacy Stockfish moved king to d8 to escape the check"
+        ),
+        (
+            "Deepseek R1 delivered checkmate with Bc7#, ending the game",
+            ""
+        )
+    ]
+
+if "current_white_log" not in st.session_state:
+    st.session_state.current_white_log = ""
+if "current_black_log" not in st.session_state:
+    st.session_state.current_black_log = ""
+
+if "error_message" not in st.session_state:
+    st.session_state.error_message = ""
+
+# Logo URLs for each side (replace with your own images if desired).
+deepseek_logo_url = "https://images.seeklogo.com/logo-png/61/3/deepseek-ai-icon-logo-png_seeklogo-611473.png?v=1956059979301376232"
+stockfish_logo_url = "https://preview.redd.it/hl0tiwfkdjc71.png?width=330&format=png&auto=webp&s=68da8eb870d174dac66f3a7ab79ca677cf13945d"
+
 
 # --------------------------------------------------------------------
-# Helper functions
+# Helper Function: Render SVG for Streamlit
 # --------------------------------------------------------------------
 def render_svg(svg_string: str) -> str:
     """
-    Converts an SVG string to HTML <img> so Streamlit can display it.
+    Converts an SVG string to an HTML <img> tag for display.
     """
     b64 = base64.b64encode(svg_string.encode("utf-8")).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}"/>'
 
-def get_language_response(prompt: str) -> str:
-    """
-    Sends the prompt to the R1 model and returns its text response.
-    """
-    response = client.chat.completions.create(
-        model="deepseek_r1",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1000,
-        temperature=0.8
-    )
-    # Remove chain-of-thought tags, if any
-    text = chain_of_thought_regex.sub("", response.choices[0].message.content)
-    return text.strip()
-
 # --------------------------------------------------------------------
-# Session State: Board, Stockfish, Moves, Chat History
+# Function to Process the Next Move Pair and Update the Logs
 # --------------------------------------------------------------------
-if "stockfish_engine" not in st.session_state:
-    # Point to your Stockfish binary
-    stockfish_path = r"C:\Users\ALL\Downloads\stockfish-windows-x86-64-avx2\stockfish\stockfish-windows-x86-64-avx2.exe"
-    if not os.path.isfile(stockfish_path):
-        raise FileNotFoundError(
-            f"Stockfish binary not found at path: {stockfish_path}. "
-            "Please ensure the Stockfish engine is present at the specified path."
-        )
-    # Create engine
-    st.session_state.stockfish_engine = Stockfish(path=stockfish_path)
-
-    # Create fresh board
-    st.session_state.board = chess.Board()
-
-    # Initialize list to store LLM commentary
-    st.session_state.commentaries = []
-    st.session_state.error_message = ""
-
-engine = st.session_state.stockfish_engine
-board = st.session_state.board
-
-# Keep engine in sync with current board
-engine.set_fen_position(board.fen())
-
-# --------------------------------------------------------------------
-# Button to Make Next Moves (White then Black), then get commentary
-# --------------------------------------------------------------------
-def make_pair_of_moves():
-    """
-    1. White move by Stockfish
-    2. Check if game is over; if not, Black move
-    3. Get commentary from R1 (Yoda) based on these two moves
-    """
+def process_next_move_pair():
+    time.sleep(2)
     try:
-        if board.is_game_over():
+        board = st.session_state.chess_board
+        moves = st.session_state.hardcoded_moves
+        idx = st.session_state.current_move_index
+
+        if idx >= len(moves):
             st.session_state.error_message = "Game is already over!"
             return
 
-        # -----------------------------
-        # White's move
-        # -----------------------------
-        white_move_uci = engine.get_best_move()
-        if not white_move_uci:
-            st.session_state.error_message = "No valid move returned by Stockfish (White)."
-            return
-        white_move_obj = chess.Move.from_uci(white_move_uci)
-        board.push(white_move_obj)
-        white_san = board.san(white_move_obj)
+        move_pair = moves[idx]
+        log_pair = st.session_state.move_log_pairs[idx]
 
-        # Check if the game ended right after White's move
-        if board.is_game_over():
-            engine.set_fen_position(board.fen())
-            st.session_state.error_message = "Game ended after White's move!"
-            return
+        # Process White's move (Deepseek R1)
+        white_move = move_pair[0]
+        board.push_san(white_move)
+        st.session_state.current_white_log = log_pair[0]
+        st.session_state.current_black_log = ""
 
-        # -----------------------------
-        # Black's move
-        # -----------------------------
-        engine.set_fen_position(board.fen())  # Sync engine
-        black_move_uci = engine.get_best_move()
-        if not black_move_uci:
-            st.session_state.error_message = "No valid move returned by Stockfish (Black)."
-            return
-        black_move_obj = chess.Move.from_uci(black_move_uci)
-        board.push(black_move_obj)
-        black_san = board.san(black_move_obj)
+        # Update the board placeholder after White's move
+        board_svg = chess.svg.board(board=board)
+        board_placeholder.write(render_svg(board_svg), unsafe_allow_html=True)
+        time.sleep(2)  # Pause to visualize White's move
 
-        # Sync engine again
-        engine.set_fen_position(board.fen())
+        # Process Black's move (Legacy Stockfish) if available
+        if len(move_pair) == 2:
+            black_move = move_pair[1]
+            board.push_san(black_move)
+            st.session_state.current_black_log = log_pair[1]
 
-        # -----------------------------
-        # Now get Yoda commentary
-        # -----------------------------
-        prompt = character_prompt.format(
-            character=CHARACTER,
-            white_move=white_san,
-            black_move=black_san
-        )
-        commentary_text = get_language_response(prompt)
+            # Update the board placeholder after Black's move
+            board_svg = chess.svg.board(board=board)
+            board_placeholder.write(render_svg(board_svg), unsafe_allow_html=True)
+            # time.sleep(2)  # Pause to visualize Black's move
 
-        # Add commentary to session
-        st.session_state.commentaries.append(commentary_text)
+        st.session_state.current_move_index += 1
         st.session_state.error_message = ""
-
     except Exception as e:
         st.session_state.error_message = f"Error: {e}"
+        st.session_state.current_white_log = ""
+        st.session_state.current_black_log = ""
 
-st.button("Make next moves (White & Black)", on_click=make_pair_of_moves)
+
+# --------------------------------------------------------------------
+# Button: Advance the Game with the Next Move Pair
+# --------------------------------------------------------------------
+st.button("Advance Move Pair (White & Black)", on_click=process_next_move_pair)
+
+if st.button("Reset Board"):
+    streamlit_js_eval(js_expressions="parent.window.location.reload()")
 
 # --------------------------------------------------------------------
 # Error / Status Display
@@ -169,19 +220,44 @@ if st.session_state.error_message:
     st.error(st.session_state.error_message, icon="🚨")
 
 # --------------------------------------------------------------------
-# Render the current board
+# Render the Current Board
 # --------------------------------------------------------------------
-board_svg = chess.svg.board(board=board)
+board_svg = chess.svg.board(board=st.session_state.chess_board)
 st.write(render_svg(board_svg), unsafe_allow_html=True)
 
-# If the game ended, let the user know
-if board.is_game_over():
+if st.session_state.chess_board.is_game_over():
     st.info("Game Over!", icon="🏁")
 
 # --------------------------------------------------------------------
-# Show the commentary in descending order (most recent first)
+# Display the Current Move Log with Logos
 # --------------------------------------------------------------------
-if st.session_state.commentaries:
-    st.markdown("### Commentary")
-    for i in range(len(st.session_state.commentaries) - 1, -1, -1):
-        message(st.session_state.commentaries[i], key=str(i))
+if st.session_state.current_white_log or st.session_state.current_black_log:
+    st.markdown("### Current Move")
+    cols = st.columns(2)
+    with cols[0]:
+        st.image(deepseek_logo_url, width=50)
+        st.write(st.session_state.current_white_log)
+    with cols[1]:
+        if st.session_state.current_black_log:
+            st.image(stockfish_logo_url, width=50)
+            st.write(st.session_state.current_black_log)
+
+# --------------------------------------------------------------------
+# Move History Display (Chronological Order)
+# --------------------------------------------------------------------
+st.markdown("### Move Log")
+
+# Display the entire move history dynamically
+if "move_history" not in st.session_state:
+    st.session_state.move_history = []
+
+# Append the latest move logs if not already added
+if st.session_state.current_white_log and (st.session_state.current_white_log not in st.session_state.move_history):
+    st.session_state.move_history.append(st.session_state.current_white_log)
+if st.session_state.current_black_log and (st.session_state.current_black_log not in st.session_state.move_history):
+    st.session_state.move_history.append(st.session_state.current_black_log)
+
+# Show the move log in a scrollable format
+with st.expander("📜 View Move Log", expanded=True):
+    for move_log in st.session_state.move_history:
+        st.markdown(f"- {move_log}")

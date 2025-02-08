@@ -1,5 +1,6 @@
 # playground
 
+setup uv using: curl -LsSf https://astral.sh/uv/install.sh | sh
 
 uv venv 
 

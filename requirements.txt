@@ -1,0 +1,7 @@
+streamlit
+streamlit-chat
+chess
+stockfish
+langchain
+openai
+python-dotenv
